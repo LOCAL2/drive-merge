@@ -174,27 +174,62 @@ body {
   color: var(--md-sys-color-on-secondary-container);
 }
 
-.storage-section {
-  padding: 16px;
+.sidebar-footer-card {
+  margin-top: auto;
   background: var(--md-sys-color-surface-container-low);
   border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 16px;
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.sidebar-footer-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-color: var(--md-sys-color-outline);
+}
+
+[data-theme='dark'] .sidebar-footer-card {
+  background: var(--md-sys-color-surface-container);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme='dark'] .sidebar-footer-card:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.sidebar-divider {
+  height: 1px;
+  background-color: var(--md-sys-color-outline-variant);
+  margin: 0;
+  opacity: 0.6;
+}
+
+.storage-section {
   display: flex;
   flex-direction: column;
 }
 
 .storage-meter {
-  height: 6px;
-  background-color: var(--md-sys-color-surface-container-highest);
-  border-radius: 3px;
+  height: 8px;
+  background-color: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, 0.12));
+  border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 8px;
+  margin: 0;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05); /* Adds a subtle inner shadow to make the track pop */
+}
+
+[data-theme='dark'] .storage-meter {
+  background-color: rgba(255, 255, 255, 0.15);
 }
 
 .storage-meter-fill {
   height: 100%;
   background: var(--md-sys-color-primary);
-  border-radius: 2px;
+  border-radius: 4px;
   transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -576,15 +611,43 @@ body {
 }
 
 .settings-select {
-  padding: 10px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--md-sys-color-outline);
-  background: var(--md-sys-color-background);
+  padding: 10px 36px 10px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background-color: var(--md-sys-color-surface-container);
   color: var(--md-sys-color-on-surface);
   font-family: var(--font-main);
   outline: none;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235f6368' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
 }
+
+.settings-select:hover {
+  background-color: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-outline);
+}
+
+.settings-select:focus {
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 2px var(--md-sys-color-secondary-container);
+}
+
+[data-theme='dark'] .settings-select {
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e3e3e3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+}
+
+.settings-select option {
+  background-color: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+}
+
 
 /* Toggle Switch */
 .switch {

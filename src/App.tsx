@@ -1,9 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import './index.css';
 
 const API_URL = 'http://localhost:3001/api';
 
 type ToastInfo = { id: number; message: string; type: 'success' | 'error' };
+
+const SearchBar = ({ onSearch }: { onSearch: (q: string) => void }) => {
+  const [val, setVal] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => onSearch(val), 250);
+    return () => clearTimeout(t);
+  }, [val, onSearch]);
+  return (
+    <input 
+      type="text" 
+      className="search-input" 
+      placeholder="Search in Drive" 
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+    />
+  );
+};
 
 function App() {
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -18,6 +35,13 @@ function App() {
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<any>(null);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'device');
   const [privacyMode, setPrivacyMode] = useState(localStorage.getItem('privacyMode') === 'true');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredFiles = useMemo(() => {
+    if (!searchQuery) return files;
+    const lowerQuery = searchQuery.toLowerCase();
+    return files.filter(file => file.name.toLowerCase().includes(lowerQuery));
+  }, [files, searchQuery]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -194,7 +218,7 @@ function App() {
 
         <div className="search-bar">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--md-sys-color-on-surface-variant)"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
-          <input type="text" className="search-input" placeholder="Search in Drive" />
+          <SearchBar onSearch={setSearchQuery} />
         </div>
 
         <div className="top-bar-right">
@@ -232,7 +256,7 @@ function App() {
             </div>
           </div>
 
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div className="sidebar-footer-card">
             {isLoading ? (
               <div className="storage-section">
                 <div style={{ marginTop: '12px' }}>
@@ -248,13 +272,20 @@ function App() {
                   <div style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>Storage</div>
                 </div>
                 
-                <div style={{ marginTop: '8px' }}>
-                  <div className="storage-meter" style={{ marginBottom: '8px' }}>
+                <div style={{ marginTop: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '6px' }}>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface)' }}>
+                      {formatBytes(quota?.totalUsage || 0)}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--md-sys-color-on-surface-variant)', fontWeight: 500 }}>
+                      {formatBytes(quota?.totalLimit || 0)}
+                    </div>
+                  </div>
+                  <div className="storage-meter">
                     <div className="storage-meter-fill" style={{ width: `${Math.min(100, Math.max(0, getStoragePercentage()))}%`, minWidth: getStoragePercentage() > 0 ? '4px' : '0' }}></div>
                   </div>
-                  <div className="storage-text" style={{ fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--md-sys-color-on-surface)', fontWeight: 500 }}>{formatBytes(quota?.totalUsage || 0)}</span>
-                    <span style={{ color: 'var(--md-sys-color-on-surface-variant)' }}> of {formatBytes(quota?.totalLimit || 0)} used ({getStoragePercentage().toFixed(2)}%)</span>
+                  <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--md-sys-color-on-surface-variant)', fontWeight: 500, marginTop: '4px' }}>
+                    {getStoragePercentage().toFixed(2)}% used
                   </div>
                 </div>
                 
@@ -263,28 +294,31 @@ function App() {
                 </button>
               </div>
             )}
-            <div style={{ margin: '0 8px', paddingTop: '8px', paddingBottom: '8px' }}>
-                <h4 style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface-variant)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Connected Accounts</h4>
+            
+            <div className="sidebar-divider"></div>
+            
+            <div style={{ paddingBottom: '4px' }}>
+              <h4 style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface-variant)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Connected Accounts</h4>
 
-                <div className="avatar-stack" onClick={() => setIsAccountsModalOpen(true)}>
-                  {(quota && quota.accounts ? quota.accounts : accounts).slice(0, 3).map((acc: any) => (
-                    <div key={acc.id || acc.email} className="avatar-stack-item">
-                      {acc.photoLink ? (
-                        <img src={acc.photoLink} alt={acc.email} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
-                      ) : (
-                        <div style={{ background: 'var(--md-sys-color-primary)', color: 'white', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 'bold' }}>
-                          {acc.email.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {(quota?.accounts?.length || accounts.length) > 3 && (
-                    <div className="avatar-stack-item avatar-stack-more">
-                      +{(quota?.accounts?.length || accounts.length) - 3}
-                    </div>
-                  )}
-                </div>
+              <div className="avatar-stack" onClick={() => setIsAccountsModalOpen(true)} style={{ cursor: 'pointer' }}>
+                {(quota && quota.accounts ? quota.accounts : accounts).slice(0, 3).map((acc: any) => (
+                  <div key={acc.id || acc.email} className="avatar-stack-item">
+                    {acc.photoLink ? (
+                      <img src={acc.photoLink} alt={acc.email} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
+                    ) : (
+                      <div style={{ background: 'var(--md-sys-color-primary)', color: 'white', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 'bold' }}>
+                        {acc.email.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {(quota?.accounts?.length || accounts.length) > 3 && (
+                  <div className="avatar-stack-item avatar-stack-more">
+                    +{(quota?.accounts?.length || accounts.length) - 3}
+                  </div>
+                )}
               </div>
+            </div>
           </div>
         </div>
 
@@ -338,11 +372,21 @@ function App() {
                 </div>
               )}
 
-              {accounts.length === 0 ? (
+              {isLoading && accounts.length === 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '100px' }}>
+                  <div className="spinner" style={{ width: '40px', height: '40px', borderTopColor: 'var(--md-sys-color-primary)', borderRightColor: 'transparent', borderBottomColor: 'transparent', borderLeftColor: 'transparent', borderWidth: '4px' }}></div>
+                </div>
+              ) : accounts.length === 0 ? (
                 <div style={{ textAlign: 'center', marginTop: '100px' }}>
                   <h2 style={{ fontWeight: 400, fontSize: '1.8rem', marginBottom: '16px' }}>A place for all of your files</h2>
-                  <button className="btn-new" onClick={loginWithGoogle} style={{ margin: '0 auto', background: 'var(--md-sys-color-primary)' }}>
-                    <span style={{ color: 'white' }}>Connect Google Drive</span>
+                  <button className="btn-new" onClick={loginWithGoogle} style={{ margin: '0 auto', background: 'var(--md-sys-color-surface)', color: 'var(--md-sys-color-on-surface)', border: '1px solid var(--md-sys-color-outline-variant)', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px' }}>
+                    <svg width="24" height="24" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                      <path d="m6.6 66.85 22.35 11.1c5.8 2.9 12.2.6 15.1-5.2l20.4-38.6" fill="#0066da"/>
+                      <path d="m46.5 10.55-21.4 39.5-22.1-11c-5.8-2.9-8.1-9.3-5.2-15.1l21.4-39.5c2.9-5.8 9.3-8.1 15.1-5.2z" fill="#00ac47"/>
+                      <path d="m43.5 10.55 22.35 11.1c5.8 2.9 8.1 9.3 5.2 15.1l-20.4 38.6c-2.9 5.8-9.3 8.1-15.1 5.2z" fill="#ea4335"/>
+                      <path d="m25.1 50.05 22.1 11c5.8 2.9 12.2.6 15.1-5.2l21.4-39.5c2.9-5.8.6-12.2-5.2-15.1z" fill="#ffba00"/>
+                    </svg>
+                    <span style={{ fontWeight: 500 }}>Connect Google Drive</span>
                   </button>
                 </div>
               ) : (
@@ -363,15 +407,19 @@ function App() {
                       <img src="https://ssl.gstatic.com/docs/doclist/images/empty_state_my_drive_v2.svg" alt="Empty Drive" style={{ opacity: 0.6, width: '250px', marginBottom: '24px' }} />
                       <p>Drag files here or use the "New" button to upload.</p>
                     </div>
+                  ) : filteredFiles.length === 0 ? (
+                    <div style={{ textAlign: 'center', marginTop: '80px', color: 'var(--md-sys-color-on-surface-variant)' }}>
+                      <p>No files match "{searchQuery}"</p>
+                    </div>
                   ) : (
                     <div className="file-grid">
-                      {files.map(file => (
+                      {filteredFiles.map(file => (
                         <div key={file.id} className="file-card" onClick={() => setSelectedPreviewFile(file)}>
                           <div className="file-card-header">
                             {file.iconLink ? (
                               <img src={file.iconLink} alt="Icon" width="24" height="24" referrerPolicy="no-referrer" />
                             ) : (
-                              <svg width="24" height="24" viewBox="0 0 24 24" fill={file.mimeType.includes('pdf') ? '#EA4335' : file.mimeType.includes('image') ? '#34A853' : file.mimeType.includes('video') ? '#FBBC04' : '#4285F4'}>
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill={file.mimeType.includes('pdf') ? '#EA4335' : file.mimeType.startsWith('image/') ? '#34A853' : file.mimeType.startsWith('video/') ? '#FBBC04' : '#4285F4'}>
                                 <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
                               </svg>
                             )}
@@ -382,7 +430,7 @@ function App() {
                               <img src={file.thumbnailLink} alt={file.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
                             ) : (
                               <div style={{ fontSize: '48px' }}>
-                                {file.mimeType.includes('image') ? '🖼️' : file.mimeType.includes('pdf') ? '📕' : file.mimeType.includes('video') ? '🎥' : '📄'}
+                                {file.mimeType.startsWith('image/') ? '🖼️' : file.mimeType.includes('pdf') ? '📕' : file.mimeType.startsWith('video/') ? '🎥' : '📄'}
                               </div>
                             )}
                           </div>
@@ -497,7 +545,7 @@ function App() {
               )}
               <button
                 className="btn-primary"
-                onClick={() => { downloadFile(selectedPreviewFile.accountId, selectedPreviewFile.id, selectedPreviewFile.name); }}
+                onClick={() => { window.open(`${API_URL}/drive/download/${selectedPreviewFile.accountId}/${selectedPreviewFile.id}`, '_blank'); }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
                 Download File
