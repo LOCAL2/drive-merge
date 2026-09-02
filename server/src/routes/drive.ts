@@ -17,9 +17,11 @@ router.get('/quota', async (req, res) => {
       const quota = await getStorageQuota(drive);
       if (quota && quota.limit) {
         return {
+          id: account.id,
           email: account.email,
           limit: quota.limit,
-          usage: quota.usage
+          usage: quota.usage,
+          photoLink: quota.user?.photoLink || null
         };
       }
       return null;
@@ -59,7 +61,7 @@ router.get('/files', async (req, res) => {
       try {
         const response = await drive.files.list({
           pageSize: 100,
-          fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink, createdTime)',
+          fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink, createdTime, hasThumbnail, thumbnailLink, iconLink)',
           q: "trashed = false",
         });
         
@@ -153,7 +155,8 @@ router.get('/download/:accountId/:fileId', async (req, res) => {
     const drive = getDriveClient(account.accessToken, account.refreshToken);
     const file = await drive.files.get({ fileId, fields: 'name, mimeType' });
     
-    res.setHeader('Content-disposition', `attachment; filename="${file.data.name}"`);
+    const isInline = req.query.inline === 'true';
+    res.setHeader('Content-disposition', `${isInline ? 'inline' : 'attachment'}; filename="${file.data.name}"`);
     res.setHeader('Content-type', file.data.mimeType || 'application/octet-stream');
     
     const response = await drive.files.get(
