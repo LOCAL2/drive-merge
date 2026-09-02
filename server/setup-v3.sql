@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS "VirtualFile";
+DROP TABLE IF EXISTS "VirtualFolder";
