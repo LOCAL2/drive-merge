@@ -78,7 +78,7 @@ function App() {
       if (currentView === 'starred' && !starred) {
         setFiles(prev => prev.filter(f => f.id !== file.id));
       }
-      showToast(starred ? 'Starred file' : 'Unstarred file');
+      showToast(starred ? 'Starred file' : 'Unstarred file', 'success');
     } catch (e) {
       showToast('Failed to star file', 'error');
     }
@@ -146,9 +146,6 @@ function App() {
     }
   };
 
-  const handleClearSelection = () => {
-    setSelectedFileIds(new Set());
-  };
 
   const getSelectedFiles = () => {
     return files.filter(f => selectedFileIds.has(f.id));
