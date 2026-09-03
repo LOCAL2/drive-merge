@@ -3,7 +3,7 @@ import prisma from '../db';
 import { getDriveClient, getStorageQuota } from '../services/google';
 import multer from 'multer';
 import fs from 'fs';
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 
 const router = Router();
 const upload = multer({ dest: 'uploads/' }); // Temporary storage for uploads
@@ -141,7 +141,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
     // Upload to best account
     const drive = getDriveClient(bestAccount.accessToken, bestAccount.refreshToken);
-    const fileMetadata = { name: file.originalname };
+    const originalNameUtf8 = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    
+    const fileMetadata = {
+      name: originalNameUtf8,
+    };
     const media = {
       mimeType: file.mimetype,
       body: fs.createReadStream(file.path),
@@ -498,7 +502,7 @@ router.post('/batch-download-zip', async (req, res) => {
     const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     const zipName = `DriveMerge_Export_${Date.now()}.zip`;
 
     res.setHeader('Content-Type', 'application/zip');
@@ -570,6 +574,7 @@ router.post('/batch-download-zip', async (req, res) => {
     await archive.finalize();
   } catch (error: any) {
     console.error('Batch download zip error:', error);
+    fs.writeFileSync('error.txt', error?.stack || error?.message || String(error));
     if (!res.headersSent) {
       res.status(500).json({ error: error?.message || 'Failed to generate zip' });
     }

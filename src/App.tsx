@@ -36,7 +36,7 @@ function App() {
   const [dragActive, setDragActive] = useState(false);
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
   const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'drive' | 'settings' | 'starred' | 'analyzer' | 'activity'>('drive');
+  const [currentView, setCurrentView] = useState<'drive' | 'settings' | 'starred' | 'activity'>('drive');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [folderPath, setFolderPath] = useState<{id: string, name: string}[]>([]);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
@@ -508,10 +508,7 @@ function App() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
               Starred
             </div>
-            <div className={`nav-item ${currentView === 'analyzer' ? 'active' : ''}`} onClick={() => setCurrentView('analyzer')}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
-              Storage Analyzer
-            </div>
+
             <div className={`nav-item ${currentView === 'activity' ? 'active' : ''}`} onClick={() => setCurrentView('activity')}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
               Activity Log
@@ -525,7 +522,7 @@ function App() {
           </div>
 
           <div className="sidebar-footer-card">
-            {isLoading ? (
+            {isLoading && !quota ? (
               <div className="storage-section">
                 <div style={{ marginTop: '12px' }}>
                   <div className="skeleton skeleton-text"></div>
@@ -597,46 +594,83 @@ function App() {
           onDragOver={currentView === 'drive' ? handleDrag : undefined}
           onDrop={currentView === 'drive' ? handleDrop : undefined}
         >
-          {currentView === 'analyzer' ? (
-            <div style={{ maxWidth: '900px', margin: '0 auto', width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h2 className="page-title" style={{ margin: 0 }}>Storage Analyzer (Top 50 Largest)</h2>
-                <button className="btn-outline" onClick={async () => {
-                  if (window.confirm("Empty trash across all accounts? This cannot be undone.")) {
-                    setIsLoading(true);
-                    await apiFetch(`${API_URL}/drive/empty-trash`, { method: 'POST' });
-                    fetchData();
-                  }
-                }} style={{ color: '#EA4335', borderColor: '#EA4335', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  Empty All Trash
-                </button>
-              </div>
-              <div className="file-grid">
-                {[...files].sort((a, b) => parseInt(b.size || '0') - parseInt(a.size || '0')).slice(0, 50).map(file => (
-                  <div key={file.id} className="file-card">
-                    <div className="file-card-header">
-                      <div className="file-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg></div>
-                      <div className="file-name" title={file.name}>{file.name}</div>
-                    </div>
-                    <div className="file-card-meta">
-                      <span style={{ fontSize: '0.85rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{formatBytes(parseInt(file.size || '0'))}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : currentView === 'activity' ? (
+          {currentView === 'activity' ? (
             <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
               <h2 className="page-title" style={{ marginBottom: '24px' }}>Activity Log</h2>
               <div style={{ background: 'var(--md-sys-color-surface)', borderRadius: '16px', padding: '24px' }}>
-                {activityLogs.map((log: any) => (
-                  <div key={log.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--md-sys-color-outline-variant)' }}>
-                    <div style={{ fontWeight: 600 }}>{log.action}</div>
-                    <div style={{ fontSize: '0.9rem' }}>{log.fileName || log.details}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{new Date(log.createdAt).toLocaleString()} - {log.googleAccount?.email || 'System'}</div>
+                {activityLogs.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--md-sys-color-on-surface-variant)' }}>
+                    <img src="https://ssl.gstatic.com/docs/doclist/images/empty_state_details_v2.svg" alt="No Activity" style={{ opacity: 0.6, width: '200px', marginBottom: '20px' }} />
+                    <p style={{ fontSize: '1.1rem' }}>No activity to show</p>
                   </div>
-                ))}
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {activityLogs.map((log: any) => {
+                      let icon = '📝';
+                      if (log.action.includes('STAR')) icon = '⭐';
+                      if (log.action.includes('UNSTAR')) icon = '☆';
+                      if (log.action.includes('UPLOAD')) icon = '📤';
+                      if (log.action.includes('DELETE')) icon = '🗑️';
+                      if (log.action.includes('DOWNLOAD')) icon = '📥';
+
+                      return (
+                        <div key={log.id} style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '16px',
+                          padding: '16px',
+                          background: 'var(--md-sys-color-surface-container-low)',
+                          border: '1px solid var(--md-sys-color-outline-variant)',
+                          borderRadius: '12px',
+                          transition: 'background-color 0.2s',
+                        }}>
+                          <div style={{ 
+                            fontSize: '24px', 
+                            background: 'var(--md-sys-color-surface-container-highest)', 
+                            width: '48px', 
+                            height: '48px', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
+                            borderRadius: '50%' 
+                          }}>
+                            {icon}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                              <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--md-sys-color-on-surface)' }}>{log.action}</div>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--md-sys-color-on-surface-variant)', whiteSpace: 'nowrap', marginLeft: '12px' }}>
+                                {new Date(log.createdAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <div style={{ fontSize: '0.95rem', color: 'var(--md-sys-color-on-surface-variant)', marginBottom: '8px' }}>
+                              {log.fileName || log.details}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ 
+                                width: '20px', 
+                                height: '20px', 
+                                borderRadius: '50%', 
+                                background: 'var(--md-sys-color-primary)', 
+                                color: 'white', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                fontSize: '11px', 
+                                fontWeight: 'bold' 
+                              }}>
+                                {(log.googleAccount?.email || 'S').charAt(0).toUpperCase()}
+                              </div>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>
+                                {log.googleAccount?.email || 'System'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ) : currentView === 'settings' ? (
@@ -741,7 +775,7 @@ function App() {
                             </span>
                           ))}
                         </div>
-                      ) : currentView === 'starred' ? 'Starred' : currentView === 'analyzer' ? 'Storage Analyzer' : currentView === 'activity' ? 'Activity Log' : 'My Drive'}
+                      ) : currentView === 'starred' ? 'Starred' : currentView === 'activity' ? 'Activity Log' : 'My Drive'}
                     </h2>
                     {filteredFiles.length > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -824,7 +858,7 @@ function App() {
                               type="checkbox"
                               className="file-card-checkbox"
                               checked={isSelected}
-                              onChange={() => {}}
+                              onChange={() => toggleSelectFile(file.id)}
                               onClick={(e) => e.stopPropagation()}
                             />
                           </div>
