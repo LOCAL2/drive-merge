@@ -75,12 +75,33 @@ router.get('/accounts', async (req, res) => {
       select: {
         id: true,
         email: true,
+        status: true,
         updatedAt: true,
       }
     });
     res.json(accounts);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch accounts' });
+  }
+});
+
+router.delete('/revoke/:id', async (req, res) => {
+  try {
+    const account = await prisma.googleAccount.findUnique({ where: { id: req.params.id } });
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+    
+    // Try to revoke the token with Google
+    try {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${account.accessToken}`, { method: 'POST' });
+    } catch (e) {
+      console.warn('Failed to revoke token on Google side, deleting locally anyway', e);
+    }
+
+    await prisma.googleAccount.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Revoke error', error);
+    res.status(500).json({ error: 'Failed to revoke account' });
   }
 });
 

@@ -694,3 +694,185 @@ input:checked + .slider {
 input:checked + .slider:before {
   transform: translateX(20px);
 }
+
+/* Transfer Modal & Buttons */
+.transfer-action-options {
+  display: flex;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.transfer-action-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.transfer-action-btn:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.transfer-action-btn.active {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-weight: 500;
+}
+
+.target-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 20px 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.target-account-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.target-account-card:hover {
+  background: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-outline);
+}
+
+.target-account-card.selected {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container);
+}
+
+.icon-button:hover {
+  background-color: var(--md-sys-color-surface-container-high);
+}
+
+/* Batch Operations Bar & Card Selection */
+.file-card {
+  position: relative;
+}
+
+.file-card.selected {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-secondary-container);
+  box-shadow: 0 0 0 1.5px var(--md-sys-color-primary);
+}
+
+.file-card-checkbox-wrapper {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.file-card:hover .file-card-checkbox-wrapper,
+.file-card.selected .file-card-checkbox-wrapper,
+.batch-active .file-card-checkbox-wrapper {
+  opacity: 1;
+}
+
+.file-card-checkbox {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: var(--md-sys-color-primary);
+  border-radius: 4px;
+}
+
+/* Floating Batch Action Bar */
+.batch-action-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  padding: 10px 20px;
+  border-radius: 32px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  animation: slideUpBatch 0.3s cubic-bezier(0.0, 0.0, 0.2, 1) forwards;
+}
+
+@keyframes slideUpBatch {
+  from { transform: translate(-50%, 60px); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+.batch-count {
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding-right: 8px;
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.batch-btn:hover {
+  background: var(--md-sys-color-surface-container);
+  border-color: var(--md-sys-color-outline);
+}
+
+.batch-btn.danger {
+  color: var(--md-sys-color-error, #ba1a1a);
+  border-color: rgba(186, 26, 26, 0.3);
+}
+
+.batch-btn.danger:hover {
+  background: rgba(186, 26, 26, 0.08);
+}
+
+.batch-btn.primary {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary, #ffffff);
+  border-color: transparent;
+}
+
+.batch-btn.primary:hover {
+  filter: brightness(1.08);
+}
+

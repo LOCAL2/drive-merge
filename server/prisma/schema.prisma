@@ -5,7 +5,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("PRISMA_DATABASE_URL")
 }
 
 model User {
@@ -27,6 +27,20 @@ model GoogleAccount {
   refreshToken String
   scope        String
   tokenExpiry  DateTime
+  status       String   @default("active")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  activities   ActivityLog[]
+}
+
+model ActivityLog {
+  id              String         @id @default(uuid())
+  action          String         // e.g., 'UPLOAD', 'TRANSFER', 'DELETE', 'EMPTY_TRASH'
+  fileName        String?
+  fileId          String?
+  sourceAccountId String?
+  targetAccountId String?
+  details         String?
+  createdAt       DateTime       @default(now())
+  googleAccount   GoogleAccount? @relation(fields: [sourceAccountId], references: [id])
 }

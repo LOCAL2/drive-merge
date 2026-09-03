@@ -31,17 +31,244 @@ function App() {
   const [dragActive, setDragActive] = useState(false);
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
   const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'drive' | 'settings'>('drive');
+  const [currentView, setCurrentView] = useState<'drive' | 'settings' | 'starred' | 'analyzer' | 'activity'>('drive');
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [folderPath, setFolderPath] = useState<{id: string, name: string}[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<any>(null);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'device');
   const [privacyMode, setPrivacyMode] = useState(localStorage.getItem('privacyMode') === 'true');
   const [searchQuery, setSearchQuery] = useState('');
+  const [transferModalFile, setTransferModalFile] = useState<any>(null);
+  const [targetAccountId, setTargetAccountId] = useState<string>('');
+  const [transferAction, setTransferAction] = useState<'copy' | 'move'>('copy');
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  // Batch Operations State
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [isBatchTransferModalOpen, setIsBatchTransferModalOpen] = useState(false);
+  const [batchTargetAccountId, setBatchTargetAccountId] = useState<string>('');
+  const [batchTransferAction, setBatchTransferAction] = useState<'copy' | 'move'>('copy');
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [filterAccountId, setFilterAccountId] = useState<string>('all');
 
   const filteredFiles = useMemo(() => {
-    if (!searchQuery) return files;
-    const lowerQuery = searchQuery.toLowerCase();
-    return files.filter(file => file.name.toLowerCase().includes(lowerQuery));
-  }, [files, searchQuery]);
+    let result = files;
+    if (filterAccountId !== 'all') {
+      result = result.filter(file => file.accountId === filterAccountId || file.accountEmail === filterAccountId);
+    }
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      result = result.filter(file => file.name.toLowerCase().includes(lowerQuery));
+    }
+    return result;
+  }, [files, searchQuery, filterAccountId]);
+
+  const handleToggleStar = async (file: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const starred = !file.starred;
+      await fetch(`${API_URL}/drive/star`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: file.id, accountId: file.accountId, starred })
+      });
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, starred } : f));
+      if (currentView === 'starred' && !starred) {
+        setFiles(prev => prev.filter(f => f.id !== file.id));
+      }
+      showToast(starred ? 'Starred file' : 'Unstarred file');
+    } catch (e) {
+      showToast('Failed to star file', 'error');
+    }
+  };
+
+  const handleOpenTransfer = (file: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setTransferModalFile(file);
+    // Auto-select first account that is not the source account
+    const availableTargets = (quota?.accounts || accounts).filter((acc: any) => (acc.id || acc.email) !== file.accountId && acc.email !== file.accountEmail);
+    if (availableTargets.length > 0) {
+      setTargetAccountId(availableTargets[0].id || availableTargets[0].email);
+    } else {
+      setTargetAccountId('');
+    }
+  };
+
+  const handleExecuteTransfer = async () => {
+    if (!transferModalFile || !targetAccountId) return;
+    setIsTransferring(true);
+    try {
+      const res = await fetch(`${API_URL}/drive/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: transferModalFile.id,
+          sourceAccountId: transferModalFile.accountId,
+          targetAccountId,
+          action: transferAction,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Successfully ${transferAction === 'move' ? 'moved' : 'copied'} "${transferModalFile.name}"`, 'success');
+        setTransferModalFile(null);
+        fetchData();
+      } else {
+        showToast(data.error || 'Transfer failed', 'error');
+      }
+    } catch (err: any) {
+      console.error('Transfer error:', err);
+      showToast('Network error during transfer', 'error');
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // Batch Helper Handlers
+  const toggleSelectFile = (fileId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedFileIds(prev => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedFileIds.size === filteredFiles.length) {
+      setSelectedFileIds(new Set());
+    } else {
+      setSelectedFileIds(new Set(filteredFiles.map(f => f.id)));
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedFileIds(new Set());
+  };
+
+  const getSelectedFiles = () => {
+    return files.filter(f => selectedFileIds.has(f.id));
+  };
+
+  const handleBatchDelete = async () => {
+    const selected = getSelectedFiles();
+    if (selected.length === 0) return;
+
+    if (!window.confirm(`Are you sure you want to delete ${selected.length} file(s) across connected accounts? This cannot be undone.`)) {
+      return;
+    }
+
+    setIsBatchProcessing(true);
+    try {
+      const res = await fetch(`${API_URL}/drive/batch-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: selected.map(f => ({ fileId: f.id, accountId: f.accountId }))
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Successfully deleted ${data.successCount} file(s)`, 'success');
+        setSelectedFileIds(new Set());
+        fetchData();
+      } else {
+        showToast(data.error || 'Batch delete failed', 'error');
+      }
+    } catch (err: any) {
+      console.error('Batch delete error:', err);
+      showToast('Network error during batch delete', 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchDownloadZip = async () => {
+    const selected = getSelectedFiles();
+    if (selected.length === 0) return;
+
+    setIsDownloadingZip(true);
+    showToast(`Preparing ZIP export for ${selected.length} file(s)...`, 'success');
+    try {
+      const res = await fetch(`${API_URL}/drive/batch-download-zip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: selected.map(f => ({ fileId: f.id, accountId: f.accountId, name: f.name }))
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to generate ZIP');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DriveMerge_Export_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showToast('ZIP download completed!', 'success');
+    } catch (err: any) {
+      console.error('Batch download error:', err);
+      showToast(err?.message || 'Failed to download ZIP', 'error');
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  };
+
+  const handleOpenBatchTransfer = () => {
+    const selected = getSelectedFiles();
+    if (selected.length === 0) return;
+
+    // Pick a default target account
+    const accountsList = quota?.accounts || accounts;
+    if (accountsList.length > 0) {
+      setBatchTargetAccountId(accountsList[0].id || accountsList[0].email);
+    }
+    setIsBatchTransferModalOpen(true);
+  };
+
+  const handleExecuteBatchTransfer = async () => {
+    const selected = getSelectedFiles();
+    if (selected.length === 0 || !batchTargetAccountId) return;
+
+    setIsBatchProcessing(true);
+    try {
+      const res = await fetch(`${API_URL}/drive/batch-transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: selected.map(f => ({ fileId: f.id, sourceAccountId: f.accountId, name: f.name })),
+          targetAccountId: batchTargetAccountId,
+          action: batchTransferAction
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Successfully ${batchTransferAction === 'move' ? 'moved' : 'copied'} ${data.successCount} file(s)`, 'success');
+        setIsBatchTransferModalOpen(false);
+        setSelectedFileIds(new Set());
+        fetchData();
+      } else {
+        showToast(data.error || 'Batch transfer failed', 'error');
+      }
+    } catch (err: any) {
+      console.error('Batch transfer error:', err);
+      showToast('Network error during batch transfer', 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +300,9 @@ function App() {
 
   useEffect(() => {
     fetchData();
+  }, [currentFolderId, currentView]);
+
+  useEffect(() => {
     window.addEventListener('message', handleAuthMessage);
     return () => window.removeEventListener('message', handleAuthMessage);
   }, []);
@@ -100,14 +330,28 @@ function App() {
       setAccounts(accData);
 
       if (accData.length > 0) {
-        const [qRes, fRes] = await Promise.all([
-          fetch(`${API_URL}/drive/quota`),
-          fetch(`${API_URL}/drive/files`)
-        ]);
+        let url = `${API_URL}/drive/files`;
+        const params = new URLSearchParams();
+        if (currentFolderId && currentView === 'drive') params.append('folderId', currentFolderId);
+        if (currentView === 'starred') params.append('starred', 'true');
+        if (params.toString()) url += '?' + params.toString();
 
-        setQuota(await qRes.json());
-        const data = await fRes.json();
+        const fetchPromises: any = [
+          fetch(`${API_URL}/drive/quota`),
+          fetch(url)
+        ];
+        if (currentView === 'activity') {
+          fetchPromises.push(fetch(`${API_URL}/drive/activity-logs`));
+        }
+
+        const resArr = await Promise.all(fetchPromises);
+        setQuota(await resArr[0].json());
+        const data = await resArr[1].json();
         setFiles(data.files || []);
+        if (resArr[2]) {
+          const logsData = await resArr[2].json();
+          setActivityLogs(logsData.logs || []);
+        }
       }
     } catch (e) {
       console.error('Failed to fetch data', e);
@@ -222,31 +466,45 @@ function App() {
         </div>
 
         <div className="top-bar-right">
-          <button className="btn-primary" onClick={loginWithGoogle}>
-            <div style={{ background: 'white', borderRadius: '50%', padding: '2px', display: 'flex' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-              </svg>
-            </div>
-            Connect Drive
-          </button>
+          <select 
+            className="settings-select" 
+            style={{ padding: '6px 12px', fontSize: '0.85rem', width: 'auto', borderRadius: '20px' }}
+            value={filterAccountId}
+            onChange={(e) => setFilterAccountId(e.target.value)}
+          >
+            <option value="all">All Accounts</option>
+            {(quota?.accounts || accounts).map((acc: any) => (
+              <option key={acc.id || acc.email} value={acc.id || acc.email}>{acc.email}</option>
+            ))}
+          </select>
         </div>
       </div>
 
       <div className="body-layout">
         <div className="sidebar">
-          <button className="btn-new" onClick={handleNewClick}>
-            <svg width="24" height="24" viewBox="0 0 24 24"><path fill="#EA4335" d="M10 3h4v18h-4z" /><path fill="#FBBC04" d="M3 10h18v4H3z" /><path fill="#4285F4" d="M10 3h4v9h-4z" /><path fill="#34A853" d="M3 10h11v4H3z" /></svg>
-            <span>New</span>
-          </button>
+          {accounts.length > 0 && (
+            <button className="btn-new" onClick={handleNewClick}>
+              <svg width="24" height="24" viewBox="0 0 24 24"><path fill="#EA4335" d="M10 3h4v18h-4z" /><path fill="#FBBC04" d="M3 10h18v4H3z" /><path fill="#4285F4" d="M10 3h4v9h-4z" /><path fill="#34A853" d="M3 10h11v4H3z" /></svg>
+              <span>New</span>
+            </button>
+          )}
 
           <div className="nav-menu">
-            <div className={`nav-item ${currentView === 'drive' ? 'active' : ''}`} onClick={() => setCurrentView('drive')}>
+            <div className={`nav-item ${currentView === 'drive' ? 'active' : ''}`} onClick={() => { setCurrentView('drive'); setCurrentFolderId(null); setFolderPath([]); }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 2H5c-1.11 0-2 .9-2 2v16c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 15l-5-5h3V8h4v4h3l-5 5z" /></svg>
               My Drive
+            </div>
+            <div className={`nav-item ${currentView === 'starred' ? 'active' : ''}`} onClick={() => { setCurrentView('starred'); setCurrentFolderId(null); setFolderPath([]); }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+              Starred
+            </div>
+            <div className={`nav-item ${currentView === 'analyzer' ? 'active' : ''}`} onClick={() => setCurrentView('analyzer')}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
+              Storage Analyzer
+            </div>
+            <div className={`nav-item ${currentView === 'activity' ? 'active' : ''}`} onClick={() => setCurrentView('activity')}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+              Activity Log
             </div>
             <div className={`nav-item ${currentView === 'settings' ? 'active' : ''}`} onClick={() => setCurrentView('settings')}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -329,7 +587,49 @@ function App() {
           onDragOver={currentView === 'drive' ? handleDrag : undefined}
           onDrop={currentView === 'drive' ? handleDrop : undefined}
         >
-          {currentView === 'settings' ? (
+          {currentView === 'analyzer' ? (
+            <div style={{ maxWidth: '900px', margin: '0 auto', width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <h2 className="page-title" style={{ margin: 0 }}>Storage Analyzer (Top 50 Largest)</h2>
+                <button className="btn-outline" onClick={async () => {
+                  if (window.confirm("Empty trash across all accounts? This cannot be undone.")) {
+                    setIsLoading(true);
+                    await fetch(`${API_URL}/drive/empty-trash`, { method: 'POST' });
+                    fetchData();
+                  }
+                }} style={{ color: '#EA4335', borderColor: '#EA4335', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  Empty All Trash
+                </button>
+              </div>
+              <div className="file-grid">
+                {[...files].sort((a, b) => parseInt(b.size || '0') - parseInt(a.size || '0')).slice(0, 50).map(file => (
+                  <div key={file.id} className="file-card">
+                    <div className="file-card-header">
+                      <div className="file-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg></div>
+                      <div className="file-name" title={file.name}>{file.name}</div>
+                    </div>
+                    <div className="file-card-meta">
+                      <span style={{ fontSize: '0.85rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{formatBytes(parseInt(file.size || '0'))}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : currentView === 'activity' ? (
+            <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
+              <h2 className="page-title" style={{ marginBottom: '24px' }}>Activity Log</h2>
+              <div style={{ background: 'var(--md-sys-color-surface)', borderRadius: '16px', padding: '24px' }}>
+                {activityLogs.map((log: any) => (
+                  <div key={log.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--md-sys-color-outline-variant)' }}>
+                    <div style={{ fontWeight: 600 }}>{log.action}</div>
+                    <div style={{ fontSize: '0.9rem' }}>{log.fileName || log.details}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{new Date(log.createdAt).toLocaleString()} - {log.googleAccount?.email || 'System'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : currentView === 'settings' ? (
             <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
                 <h2 className="page-title" style={{ margin: 0 }}>Settings</h2>
@@ -363,6 +663,8 @@ function App() {
                   </label>
                 </div>
               </div>
+
+
             </div>
           ) : (
             <>
@@ -380,18 +682,69 @@ function App() {
                 <div style={{ textAlign: 'center', marginTop: '100px' }}>
                   <h2 style={{ fontWeight: 400, fontSize: '1.8rem', marginBottom: '16px' }}>A place for all of your files</h2>
                   <button className="btn-new" onClick={loginWithGoogle} style={{ margin: '0 auto', background: 'var(--md-sys-color-surface)', color: 'var(--md-sys-color-on-surface)', border: '1px solid var(--md-sys-color-outline-variant)', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px' }}>
-                    <svg width="24" height="24" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
-                      <path d="m6.6 66.85 22.35 11.1c5.8 2.9 12.2.6 15.1-5.2l20.4-38.6" fill="#0066da"/>
-                      <path d="m46.5 10.55-21.4 39.5-22.1-11c-5.8-2.9-8.1-9.3-5.2-15.1l21.4-39.5c2.9-5.8 9.3-8.1 15.1-5.2z" fill="#00ac47"/>
-                      <path d="m43.5 10.55 22.35 11.1c5.8 2.9 8.1 9.3 5.2 15.1l-20.4 38.6c-2.9 5.8-9.3 8.1-15.1 5.2z" fill="#ea4335"/>
-                      <path d="m25.1 50.05 22.1 11c5.8 2.9 12.2.6 15.1-5.2l21.4-39.5c2.9-5.8.6-12.2-5.2-15.1z" fill="#ffba00"/>
-                    </svg>
+                    <img src="/Google_Drive_Logo.svg" alt="Google Drive" width="24" height="24" style={{ objectFit: 'contain' }} />
                     <span style={{ fontWeight: 500 }}>Connect Google Drive</span>
                   </button>
                 </div>
               ) : (
                 <>
-                  <h2 className="page-title">My Drive</h2>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 className="page-title" style={{ margin: 0 }}>
+                      {currentView === 'drive' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ cursor: 'pointer', color: currentFolderId ? 'var(--md-sys-color-primary)' : 'inherit' }} onClick={() => { setCurrentFolderId(null); setFolderPath([]); }}>My Drive</span>
+                          {folderPath.map((f, i) => (
+                            <span key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--md-sys-color-on-surface-variant)"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                              <span 
+                                style={{ cursor: 'pointer', color: i === folderPath.length - 1 ? 'inherit' : 'var(--md-sys-color-primary)' }}
+                                onClick={() => {
+                                  setCurrentFolderId(f.id);
+                                  setFolderPath(folderPath.slice(0, i + 1));
+                                }}
+                              >
+                                {f.name}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : currentView === 'starred' ? 'Starred' : currentView === 'analyzer' ? 'Storage Analyzer' : currentView === 'activity' ? 'Activity Log' : 'My Drive'}
+                    </h2>
+                    {filteredFiles.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <button
+                          className="btn-outline"
+                          onClick={handleSelectAll}
+                          style={{ padding: '6px 14px', fontSize: '0.85rem', borderRadius: '20px' }}
+                        >
+                          {selectedFileIds.size === filteredFiles.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                        {selectedFileIds.size > 0 && (
+                          <>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--md-sys-color-primary)', fontWeight: 500 }}>
+                              {selectedFileIds.size} selected
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px', marginLeft: '12px' }}>
+                              {(quota?.accounts || accounts).length > 1 && (
+                                <button className="btn-outline" onClick={handleOpenBatchTransfer} disabled={isBatchProcessing} style={{ padding: '6px 14px', fontSize: '0.85rem', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
+                                  Transfer
+                                </button>
+                              )}
+                              <button className="btn-outline" onClick={handleBatchDownloadZip} disabled={isDownloadingZip || isBatchProcessing} style={{ padding: '6px 14px', fontSize: '0.85rem', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
+                                {isDownloadingZip ? 'Zipping...' : 'Download'}
+                              </button>
+                              <button className="btn-outline" onClick={handleBatchDelete} disabled={isBatchProcessing} style={{ padding: '6px 14px', fontSize: '0.85rem', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', color: '#EA4335', borderColor: '#EA4335' }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                                Delete
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {isLoading && files.length === 0 ? (
                     <div className="file-grid">
@@ -412,9 +765,36 @@ function App() {
                       <p>No files match "{searchQuery}"</p>
                     </div>
                   ) : (
-                    <div className="file-grid">
-                      {filteredFiles.map(file => (
-                        <div key={file.id} className="file-card" onClick={() => setSelectedPreviewFile(file)}>
+                    <div className={`file-grid ${selectedFileIds.size > 0 ? 'batch-active' : ''}`}>
+                      {filteredFiles.map(file => {
+                        const isSelected = selectedFileIds.has(file.id);
+                        return (
+                        <div
+                          key={file.id}
+                          className={`file-card ${isSelected ? 'selected' : ''}`}
+                          onClick={() => setSelectedPreviewFile(file)}
+                          onDoubleClick={() => {
+                            if (file.mimeType === 'application/vnd.google-apps.folder') {
+                              setCurrentFolderId(file.id);
+                              setFolderPath([...folderPath, { id: file.id, name: file.name }]);
+                              setSelectedPreviewFile(null);
+                            }
+                          }}
+                        >
+                          {/* Selection Checkbox */}
+                          <div
+                            className="file-card-checkbox-wrapper"
+                            onClick={(e) => toggleSelectFile(file.id, e)}
+                            title={isSelected ? 'Deselect' : 'Select'}
+                          >
+                            <input
+                              type="checkbox"
+                              className="file-card-checkbox"
+                              checked={isSelected}
+                              onChange={() => {}}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
                           <div className="file-card-header">
                             {file.iconLink ? (
                               <img src={file.iconLink} alt="Icon" width="24" height="24" referrerPolicy="no-referrer" />
@@ -437,14 +817,54 @@ function App() {
                           <div className="file-card-footer">
                             <div className="file-card-meta">
                               <span style={{ fontSize: '0.85rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{formatBytes(parseInt(file.size || '0'))}</span>
-                              <span className="file-card-account">{file.accountEmail}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--md-sys-color-surface-container-high)', padding: '2px 8px 2px 2px', borderRadius: '12px' }} title={file.accountEmail}>
+                                {(() => {
+                                  const acc = (quota?.accounts || accounts).find((a: any) => a.id === file.accountId || a.email === file.accountEmail);
+                                  if (acc?.photoLink) {
+                                    return <img src={acc.photoLink} alt="Avatar" style={{ width: '18px', height: '18px', borderRadius: '50%' }} referrerPolicy="no-referrer" />;
+                                  }
+                                  return (
+                                    <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: 'var(--md-sys-color-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' }}>
+                                      {file.accountEmail.charAt(0).toUpperCase()}
+                                    </div>
+                                  );
+                                })()}
+                                <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {file.accountEmail.split('@')[0]}
+                                </span>
+                              </div>
                             </div>
-                            <button className="icon-button" onClick={(e) => { e.stopPropagation(); window.open(`${API_URL}/drive/download/${file.accountId}/${file.id}`, '_blank'); }} title="Download">
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
-                            </button>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                className="icon-button"
+                                onClick={(e) => handleToggleStar(file, e)}
+                                title={file.starred ? "Unstar" : "Star"}
+                                style={{ color: file.starred ? '#F4B400' : 'var(--md-sys-color-on-surface-variant)' }}
+                              >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                  {file.starred ? <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/> : <path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"/>}
+                                </svg>
+                              </button>
+                              {(quota?.accounts || accounts).length > 1 && (
+                                <button
+                                  className="icon-button"
+                                  onClick={(e) => handleOpenTransfer(file, e)}
+                                  title="Transfer across drives (Copy / Move)"
+                                  style={{ color: 'var(--md-sys-color-primary)' }}
+                                >
+                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/>
+                                  </svg>
+                                </button>
+                              )}
+                              <button className="icon-button" onClick={(e) => { e.stopPropagation(); window.open(`${API_URL}/drive/download/${file.accountId}/${file.id}`, '_blank'); }} title="Download">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </>
@@ -512,12 +932,19 @@ function App() {
               </button>
             </div>
 
-            {selectedPreviewFile.mimeType === 'application/pdf' ? (
+            {selectedPreviewFile.mimeType === 'application/pdf' || selectedPreviewFile.mimeType.startsWith('text/') || selectedPreviewFile.mimeType.includes('json') || selectedPreviewFile.mimeType.includes('javascript') || selectedPreviewFile.mimeType.includes('csv') ? (
               <iframe 
                 src={`${API_URL}/drive/download/${selectedPreviewFile.accountId}/${selectedPreviewFile.id}?inline=true`} 
                 className="modal-preview-image"
                 style={{ width: '100%', height: '70vh', border: 'none', background: 'white' }}
                 title={selectedPreviewFile.name}
+              />
+            ) : selectedPreviewFile.mimeType.startsWith('video/') ? (
+              <video 
+                controls 
+                src={`${API_URL}/drive/download/${selectedPreviewFile.accountId}/${selectedPreviewFile.id}`} 
+                className="modal-preview-image"
+                style={{ width: '100%', maxHeight: '70vh', background: 'black' }}
               />
             ) : selectedPreviewFile.hasThumbnail && selectedPreviewFile.thumbnailLink ? (
               <img
@@ -543,6 +970,22 @@ function App() {
                   Open in Drive
                 </a>
               )}
+              {(quota?.accounts || accounts).length > 1 && (
+                <button
+                  className="btn-outline"
+                  onClick={() => {
+                    const file = selectedPreviewFile;
+                    setSelectedPreviewFile(null);
+                    handleOpenTransfer(file);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/>
+                  </svg>
+                  Transfer File
+                </button>
+              )}
               <button
                 className="btn-primary"
                 onClick={() => { window.open(`${API_URL}/drive/download/${selectedPreviewFile.accountId}/${selectedPreviewFile.id}`, '_blank'); }}
@@ -550,6 +993,263 @@ function App() {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
                 Download File
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cross-Account Transfer Modal */}
+      {transferModalFile && (
+        <div className="modal-overlay" onClick={() => !isTransferring && setTransferModalFile(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h2>Transfer File Across Drives</h2>
+              <button className="modal-close" disabled={isTransferring} onClick={() => setTransferModalFile(null)}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {/* Selected File Summary */}
+              <div style={{
+                background: 'var(--md-sys-color-surface-container-low)',
+                borderRadius: '12px',
+                padding: '14px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                border: '1px solid var(--md-sys-color-outline-variant)'
+              }}>
+                <div style={{ fontSize: '28px' }}>
+                  {transferModalFile.mimeType?.startsWith('image/') ? '🖼️' : transferModalFile.mimeType?.includes('pdf') ? '📕' : transferModalFile.mimeType?.startsWith('video/') ? '🎥' : '📄'}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={transferModalFile.name}>
+                    {transferModalFile.name}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--md-sys-color-on-surface-variant)', marginTop: '2px' }}>
+                    From: <strong>{transferModalFile.accountEmail}</strong> ({formatBytes(parseInt(transferModalFile.size || '0'))})
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Toggle (Copy vs Move) */}
+              <div style={{ fontWeight: 500, fontSize: '0.9rem', marginBottom: '8px' }}>Select Action:</div>
+              <div className="transfer-action-options">
+                <button
+                  type="button"
+                  className={`transfer-action-btn ${transferAction === 'copy' ? 'active' : ''}`}
+                  onClick={() => setTransferAction('copy')}
+                  disabled={isTransferring}
+                >
+                  <span style={{ fontSize: '20px' }}>📑</span>
+                  <span>Copy (Keep both)</span>
+                  <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>Duplicate to destination</span>
+                </button>
+                <button
+                  type="button"
+                  className={`transfer-action-btn ${transferAction === 'move' ? 'active' : ''}`}
+                  onClick={() => setTransferAction('move')}
+                  disabled={isTransferring}
+                >
+                  <span style={{ fontSize: '20px' }}>📦</span>
+                  <span>Move (Delete source)</span>
+                  <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>Transfer & free source space</span>
+                </button>
+              </div>
+
+              {/* Target Account Selection */}
+              <div style={{ fontWeight: 500, fontSize: '0.9rem', marginTop: '16px', marginBottom: '8px' }}>
+                Select Destination Account:
+              </div>
+              <div className="target-account-list">
+                {(quota?.accounts || accounts)
+                  .filter((acc: any) => (acc.id || acc.email) !== transferModalFile.accountId && acc.email !== transferModalFile.accountEmail)
+                  .map((acc: any) => {
+                    const accId = acc.id || acc.email;
+                    const isSelected = targetAccountId === accId;
+                    return (
+                      <div
+                        key={accId}
+                        className={`target-account-card ${isSelected ? 'selected' : ''}`}
+                        onClick={() => !isTransferring && setTargetAccountId(accId)}
+                      >
+                        <input
+                          type="radio"
+                          name="targetAccount"
+                          checked={isSelected}
+                          onChange={() => setTargetAccountId(accId)}
+                          disabled={isTransferring}
+                          style={{ accentColor: 'var(--md-sys-color-primary)', width: '18px', height: '18px' }}
+                        />
+                        <div style={{ width: '36px', height: '36px', borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#F0F4F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {acc.photoLink ? (
+                            <img src={acc.photoLink} alt={acc.email} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
+                          ) : (
+                            <span style={{ fontWeight: 'bold', color: 'var(--md-sys-color-primary)' }}>{acc.email.charAt(0).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 500, fontSize: '0.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {acc.email}
+                          </div>
+                          {acc.usage && acc.limit && (
+                            <div style={{ fontSize: '0.78rem', color: 'var(--md-sys-color-on-surface-variant)' }}>
+                              Available: {formatBytes(parseInt(acc.limit) - parseInt(acc.usage))} free
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Progress or Actions */}
+              <div style={{ marginTop: '20px', display: 'flex', gap: '12px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  disabled={isTransferring}
+                  onClick={() => setTransferModalFile(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={isTransferring || !targetAccountId}
+                  onClick={handleExecuteTransfer}
+                  style={{ minWidth: '130px', justifyContent: 'center' }}
+                >
+                  {isTransferring ? (
+                    <>
+                      <span className="spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></span>
+                      Transferring...
+                    </>
+                  ) : (
+                    transferAction === 'move' ? 'Move File' : 'Copy File'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Transfer Modal */}
+      {isBatchTransferModalOpen && (
+        <div className="modal-overlay" onClick={() => !isBatchProcessing && setIsBatchTransferModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h2>Batch Transfer Files</h2>
+              <button className="modal-close" disabled={isBatchProcessing} onClick={() => setIsBatchTransferModalOpen(false)}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{
+                background: 'var(--md-sys-color-surface-container-low)',
+                borderRadius: '12px',
+                padding: '14px',
+                marginBottom: '16px',
+                border: '1px solid var(--md-sys-color-outline-variant)'
+              }}>
+                <div style={{ fontWeight: 600 }}>{selectedFileIds.size} files selected</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--md-sys-color-on-surface-variant)', marginTop: '2px' }}>
+                  Choose destination account and action.
+                </div>
+              </div>
+
+              {/* Action Toggle */}
+              <div style={{ fontWeight: 500, fontSize: '0.9rem', marginBottom: '8px' }}>Select Action:</div>
+              <div className="transfer-action-options">
+                <button
+                  type="button"
+                  className={`transfer-action-btn ${batchTransferAction === 'copy' ? 'active' : ''}`}
+                  onClick={() => setBatchTransferAction('copy')}
+                  disabled={isBatchProcessing}
+                >
+                  <span style={{ fontSize: '20px' }}>📑</span>
+                  <span>Copy (Keep both)</span>
+                </button>
+                <button
+                  type="button"
+                  className={`transfer-action-btn ${batchTransferAction === 'move' ? 'active' : ''}`}
+                  onClick={() => setBatchTransferAction('move')}
+                  disabled={isBatchProcessing}
+                >
+                  <span style={{ fontSize: '20px' }}>📦</span>
+                  <span>Move (Delete source)</span>
+                </button>
+              </div>
+
+              {/* Target Account Selection */}
+              <div style={{ fontWeight: 500, fontSize: '0.9rem', marginTop: '16px', marginBottom: '8px' }}>
+                Select Destination Account:
+              </div>
+              <div className="target-account-list">
+                {(quota?.accounts || accounts).map((acc: any) => {
+                  const accId = acc.id || acc.email;
+                  const isSelected = batchTargetAccountId === accId;
+                  return (
+                    <div
+                      key={accId}
+                      className={`target-account-card ${isSelected ? 'selected' : ''}`}
+                      onClick={() => !isBatchProcessing && setBatchTargetAccountId(accId)}
+                    >
+                      <input
+                        type="radio"
+                        name="batchTargetAccount"
+                        checked={isSelected}
+                        onChange={() => setBatchTargetAccountId(accId)}
+                        disabled={isBatchProcessing}
+                        style={{ accentColor: 'var(--md-sys-color-primary)', width: '18px', height: '18px' }}
+                      />
+                      <div style={{ width: '36px', height: '36px', borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#F0F4F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {acc.photoLink ? (
+                          <img src={acc.photoLink} alt={acc.email} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
+                        ) : (
+                          <span style={{ fontWeight: 'bold', color: 'var(--md-sys-color-primary)' }}>{acc.email.charAt(0).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, fontSize: '0.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {acc.email}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ marginTop: '20px', display: 'flex', gap: '12px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  disabled={isBatchProcessing}
+                  onClick={() => setIsBatchTransferModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={isBatchProcessing || !batchTargetAccountId}
+                  onClick={handleExecuteBatchTransfer}
+                  style={{ minWidth: '130px', justifyContent: 'center' }}
+                >
+                  {isBatchProcessing ? (
+                    <>
+                      <span className="spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></span>
+                      Processing...
+                    </>
+                  ) : (
+                    batchTransferAction === 'move' ? 'Move Files' : 'Copy Files'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
