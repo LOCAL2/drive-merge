@@ -3,6 +3,10 @@ import './index.css';
 
 const API_URL = 'http://localhost:3001/api';
 
+const apiFetch = async (url: string, options: RequestInit = {}) => {
+  return fetch(url, { ...options, credentials: 'include' });
+};
+
 type ToastInfo = { id: number; message: string; type: 'success' | 'error' };
 
 const SearchBar = ({ onSearch }: { onSearch: (q: string) => void }) => {
@@ -23,6 +27,7 @@ const SearchBar = ({ onSearch }: { onSearch: (q: string) => void }) => {
 };
 
 function App() {
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [quota, setQuota] = useState<{ totalLimit: number; totalUsage: number; accounts: any[] } | null>(null);
   const [files, setFiles] = useState<any[]>([]);
@@ -69,7 +74,7 @@ function App() {
     e.stopPropagation();
     try {
       const starred = !file.starred;
-      await fetch(`${API_URL}/drive/star`, {
+      await apiFetch(`${API_URL}/drive/star`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId: file.id, accountId: file.accountId, starred })
@@ -100,7 +105,7 @@ function App() {
     if (!transferModalFile || !targetAccountId) return;
     setIsTransferring(true);
     try {
-      const res = await fetch(`${API_URL}/drive/transfer`, {
+      const res = await apiFetch(`${API_URL}/drive/transfer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,7 +166,7 @@ function App() {
 
     setIsBatchProcessing(true);
     try {
-      const res = await fetch(`${API_URL}/drive/batch-delete`, {
+      const res = await apiFetch(`${API_URL}/drive/batch-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -192,7 +197,7 @@ function App() {
     setIsDownloadingZip(true);
     showToast(`Preparing ZIP export for ${selected.length} file(s)...`, 'success');
     try {
-      const res = await fetch(`${API_URL}/drive/batch-download-zip`, {
+      const res = await apiFetch(`${API_URL}/drive/batch-download-zip`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -240,7 +245,7 @@ function App() {
 
     setIsBatchProcessing(true);
     try {
-      const res = await fetch(`${API_URL}/drive/batch-transfer`, {
+      const res = await apiFetch(`${API_URL}/drive/batch-transfer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -322,7 +327,15 @@ function App() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const accRes = await fetch(`${API_URL}/auth/accounts`);
+      const meRes = await apiFetch(`${API_URL}/auth/me`);
+      if (!meRes.ok) {
+        setCurrentUser(null);
+        setIsLoading(false);
+        return;
+      }
+      setCurrentUser(await meRes.json());
+
+      const accRes = await apiFetch(`${API_URL}/auth/accounts`);
       const accData = await accRes.json();
       setAccounts(accData);
 
@@ -334,11 +347,11 @@ function App() {
         if (params.toString()) url += '?' + params.toString();
 
         const fetchPromises: any = [
-          fetch(`${API_URL}/drive/quota`),
-          fetch(url)
+          apiFetch(`${API_URL}/drive/quota`),
+          apiFetch(url)
         ];
         if (currentView === 'activity') {
-          fetchPromises.push(fetch(`${API_URL}/drive/activity-logs`));
+          fetchPromises.push(apiFetch(`${API_URL}/drive/activity-logs`));
         }
 
         const resArr = await Promise.all(fetchPromises);
@@ -359,7 +372,7 @@ function App() {
   };
 
   const loginWithGoogle = () => {
-    window.open(`${API_URL}/auth/google`, 'GoogleLogin', 'width=500,height=600');
+    window.open(`${API_URL}/auth/google?mode=login`, 'GoogleLogin', 'width=500,height=600');
   };
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -399,7 +412,7 @@ function App() {
       formData.append('file', file);
 
       try {
-        const res = await fetch(`${API_URL}/drive/upload`, {
+        const res = await apiFetch(`${API_URL}/drive/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -591,7 +604,7 @@ function App() {
                 <button className="btn-outline" onClick={async () => {
                   if (window.confirm("Empty trash across all accounts? This cannot be undone.")) {
                     setIsLoading(true);
-                    await fetch(`${API_URL}/drive/empty-trash`, { method: 'POST' });
+                    await apiFetch(`${API_URL}/drive/empty-trash`, { method: 'POST' });
                     fetchData();
                   }
                 }} style={{ color: '#EA4335', borderColor: '#EA4335', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -659,6 +672,20 @@ function App() {
                     <span className="slider"></span>
                   </label>
                 </div>
+
+                <div className="settings-row" style={{ padding: '20px 0' }}>
+                  <div>
+                    <div className="settings-label" style={{ fontSize: '1.1rem', color: '#EA4335' }}>Log Out</div>
+                    <div className="settings-desc">Sign out of DriveMerge</div>
+                  </div>
+                  <button className="btn-outline" style={{ color: '#EA4335', borderColor: '#EA4335', borderRadius: '100px', padding: '10px 24px', fontWeight: 500 }} onClick={async () => {
+                    await apiFetch(`${API_URL}/auth/logout`, { method: 'POST' });
+                    setCurrentUser(null);
+                    setAccounts([]);
+                    setFiles([]);
+                    setQuota(null);
+                  }}>Sign Out</button>
+                </div>
               </div>
 
 
@@ -671,14 +698,23 @@ function App() {
                 </div>
               )}
 
-              {isLoading && accounts.length === 0 ? (
+              {isLoading && !currentUser ? (
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: '100px' }}>
                   <div className="spinner" style={{ width: '40px', height: '40px', borderTopColor: 'var(--md-sys-color-primary)', borderRightColor: 'transparent', borderBottomColor: 'transparent', borderLeftColor: 'transparent', borderWidth: '4px' }}></div>
                 </div>
+              ) : !currentUser ? (
+                <div style={{ textAlign: 'center', marginTop: '100px' }}>
+                  <h2 style={{ fontWeight: 400, fontSize: '1.8rem', marginBottom: '16px' }}>Log In to DriveMerge</h2>
+                  <button className="btn-new" onClick={loginWithGoogle} style={{ margin: '0 auto', background: 'var(--md-sys-color-surface)', color: 'var(--md-sys-color-on-surface)', border: '1px solid var(--md-sys-color-outline-variant)', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px' }}>
+                    <img src="/Google_Drive_Logo.svg" alt="Google Drive" width="24" height="24" style={{ objectFit: 'contain' }} />
+                    <span style={{ fontWeight: 500 }}>Sign In with Google</span>
+                  </button>
+                </div>
               ) : accounts.length === 0 ? (
                 <div style={{ textAlign: 'center', marginTop: '100px' }}>
-                  <h2 style={{ fontWeight: 400, fontSize: '1.8rem', marginBottom: '16px' }}>A place for all of your files</h2>
-                  <button className="btn-new" onClick={loginWithGoogle} style={{ margin: '0 auto', background: 'var(--md-sys-color-surface)', color: 'var(--md-sys-color-on-surface)', border: '1px solid var(--md-sys-color-outline-variant)', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px' }}>
+                  <h2 style={{ fontWeight: 400, fontSize: '1.8rem', marginBottom: '16px' }}>Welcome, {currentUser.email}</h2>
+                  <p style={{ color: 'var(--md-sys-color-on-surface-variant)', marginBottom: '24px' }}>Connect your first Google Drive to get started.</p>
+                  <button className="btn-new" onClick={() => { window.open(`${API_URL}/auth/google?mode=link`, 'GoogleLogin', 'width=500,height=600'); }} style={{ margin: '0 auto', background: 'var(--md-sys-color-surface)', color: 'var(--md-sys-color-on-surface)', border: '1px solid var(--md-sys-color-outline-variant)', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px' }}>
                     <img src="/Google_Drive_Logo.svg" alt="Google Drive" width="24" height="24" style={{ objectFit: 'contain' }} />
                     <span style={{ fontWeight: 500 }}>Connect Google Drive</span>
                   </button>
@@ -909,7 +945,7 @@ function App() {
               <button
                 className="btn-outline"
                 style={{ marginTop: '12px', width: '100%', justifyContent: 'center', padding: '12px' }}
-                onClick={() => { setIsAccountsModalOpen(false); loginWithGoogle(); }}
+                onClick={() => { setIsAccountsModalOpen(false); window.open(`${API_URL}/auth/google?mode=link`, 'GoogleLogin', 'width=500,height=600'); }}
               >
                 + Connect Another Account
               </button>

@@ -8,10 +8,17 @@ const archiver = require('archiver');
 const router = Router();
 const upload = multer({ dest: 'uploads/' }); // Temporary storage for uploads
 
+router.use((req, res, next) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
 // 1. Get Merged Quota
 router.get('/quota', async (req, res) => {
   try {
-    const accounts = await prisma.googleAccount.findMany();
+    const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     
     const quotaPromises = accounts.map(async (account) => {
       const drive = getDriveClient(account.accessToken, account.refreshToken);
@@ -56,7 +63,7 @@ router.get('/quota', async (req, res) => {
 router.get('/files', async (req, res) => {
   try {
     const { folderId, accountId, starred } = req.query;
-    const accounts = await prisma.googleAccount.findMany({ where: { status: 'active' } });
+    const accounts = await prisma.googleAccount.findMany({ where: { status: 'active', userId: req.session.userId } });
     
     const filesPromises = accounts.map(async (account) => {
       if (accountId && accountId !== account.id) return [];
@@ -111,7 +118,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 
   try {
-    const accounts = await prisma.googleAccount.findMany();
+    const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     let bestAccount = accounts[0];
     let maxFreeSpace = 0;
 
@@ -170,7 +177,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 router.get('/download/:accountId/:fileId', async (req, res) => {
   try {
     const { accountId, fileId } = req.params;
-    const account = await prisma.googleAccount.findUnique({ where: { id: accountId } });
+    const account = await prisma.googleAccount.findFirst({ where: { id: accountId, userId: req.session.userId } });
     
     if (!account) return res.status(404).json({ error: 'Account not found' });
     
@@ -213,8 +220,8 @@ router.post('/transfer', async (req, res) => {
     }
 
     const [sourceAccount, targetAccount] = await Promise.all([
-      prisma.googleAccount.findUnique({ where: { id: sourceAccountId } }),
-      prisma.googleAccount.findUnique({ where: { id: targetAccountId } })
+      prisma.googleAccount.findFirst({ where: { id: sourceAccountId, userId: req.session.userId } }),
+      prisma.googleAccount.findFirst({ where: { id: targetAccountId, userId: req.session.userId } })
     ]);
 
     if (!sourceAccount) return res.status(404).json({ error: 'Source account not found' });
@@ -323,7 +330,7 @@ router.post('/batch-delete', async (req, res) => {
       return res.status(400).json({ error: 'files array is required' });
     }
 
-    const accounts = await prisma.googleAccount.findMany();
+    const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
     const results = await Promise.all(
@@ -369,11 +376,11 @@ router.post('/batch-transfer', async (req, res) => {
       return res.status(400).json({ error: 'files array and targetAccountId are required' });
     }
 
-    const targetAccount = await prisma.googleAccount.findUnique({ where: { id: targetAccountId } });
+    const targetAccount = await prisma.googleAccount.findFirst({ where: { id: targetAccountId, userId: req.session.userId } });
     if (!targetAccount) return res.status(404).json({ error: 'Target account not found' });
 
     const targetDrive = getDriveClient(targetAccount.accessToken, targetAccount.refreshToken);
-    const accounts = await prisma.googleAccount.findMany();
+    const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
     const results = [];
@@ -488,7 +495,7 @@ router.post('/batch-download-zip', async (req, res) => {
       return res.status(400).json({ error: 'files array is required' });
     }
 
-    const accounts = await prisma.googleAccount.findMany();
+    const accounts = await prisma.googleAccount.findMany({ where: { userId: req.session.userId } });
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
     const archive = archiver('zip', { zlib: { level: 6 } });
@@ -572,7 +579,7 @@ router.post('/batch-download-zip', async (req, res) => {
 // 9. Empty Trash
 router.post('/empty-trash', async (req, res) => {
   try {
-    const accounts = await prisma.googleAccount.findMany({ where: { status: 'active' } });
+    const accounts = await prisma.googleAccount.findMany({ where: { status: 'active', userId: req.session.userId } });
     
     const results = await Promise.all(
       accounts.map(async (account) => {
@@ -608,7 +615,7 @@ router.post('/star', async (req, res) => {
       return res.status(400).json({ error: 'fileId, accountId, and starred are required' });
     }
 
-    const account = await prisma.googleAccount.findUnique({ where: { id: accountId } });
+    const account = await prisma.googleAccount.findFirst({ where: { id: accountId, userId: req.session.userId } });
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
     const drive = getDriveClient(account.accessToken, account.refreshToken);
@@ -636,6 +643,7 @@ router.post('/star', async (req, res) => {
 router.get('/activity-logs', async (req, res) => {
   try {
     const logs = await prisma.activityLog.findMany({
+      where: { googleAccount: { userId: req.session.userId } },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: { googleAccount: { select: { email: true } } }

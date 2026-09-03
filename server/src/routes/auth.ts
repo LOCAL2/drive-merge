@@ -1,23 +1,51 @@
 import { Router } from 'express';
 import { getAuthUrl, getTokens, getDriveClient, getStorageQuota } from '../services/google';
 import prisma from '../db';
+import session from 'express-session';
+
+declare module 'express-session' {
+  interface SessionData {
+    userId: string;
+  }
+}
 
 const router = Router();
 
-// In a real app, this would be from a session/JWT. Hardcoding user 1 for simplicity.
-const DEFAULT_USER_ID = "user-1"; 
+// Endpoint to check current user session
+router.get('/me', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.session.userId } });
+    if (!user) return res.status(401).json({ error: 'User not found' });
+    res.json(user);
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.json({ success: true });
+  });
+});
 
 router.get('/google', async (req, res) => {
   const url = getAuthUrl();
-  res.redirect(url);
+  // Pass the current mode (login vs link) using state parameter
+  const state = req.query.mode === 'login' ? 'login' : 'link';
+  res.redirect(`${url}&state=${state}`);
 });
 
 router.get('/google/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   
   if (!code || typeof code !== 'string') {
     return res.status(400).send('Invalid request');
   }
+
+  const isLogin = state === 'login';
 
   try {
     const tokens = await getTokens(code);
@@ -35,25 +63,40 @@ router.get('/google/callback', async (req, res) => {
     
     const email = quota.user.emailAddress;
 
-    // Ensure our default user exists (temporary hack for single-user mode)
-    let user = await prisma.user.findFirst();
-    if (!user) {
-      user = await prisma.user.create({
-        data: { id: DEFAULT_USER_ID, email: 'admin@drive-merge.local' }
-      });
+    let user;
+
+    if (isLogin) {
+      // Find or create user for this Google account
+      user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        user = await prisma.user.create({
+          data: { email }
+        });
+      }
+      req.session.userId = user.id;
+    } else {
+      // Linking account to existing session
+      if (!req.session.userId) {
+        return res.status(401).send('You must be logged in to link an account');
+      }
+      user = await prisma.user.findUnique({ where: { id: req.session.userId } });
+      if (!user) {
+         return res.status(401).send('User not found');
+      }
     }
 
-    // Save or update Google Account
+    // Save or update Google Account linked to the user
     await prisma.googleAccount.upsert({
       where: { googleId: email },
       update: {
+        userId: user.id,
         accessToken: tokens.access_token,
         ...(tokens.refresh_token && { refreshToken: tokens.refresh_token }),
         tokenExpiry: new Date(tokens.expiry_date || Date.now() + 3600000),
       },
       create: {
         userId: user.id,
-        googleId: email, // use email as ID for now
+        googleId: email, 
         email: email,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token || '',
@@ -70,8 +113,11 @@ router.get('/google/callback', async (req, res) => {
 });
 
 router.get('/accounts', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
+
   try {
     const accounts = await prisma.googleAccount.findMany({
+      where: { userId: req.session.userId },
       select: {
         id: true,
         email: true,
@@ -86,8 +132,12 @@ router.get('/accounts', async (req, res) => {
 });
 
 router.delete('/revoke/:id', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
+
   try {
-    const account = await prisma.googleAccount.findUnique({ where: { id: req.params.id } });
+    const account = await prisma.googleAccount.findFirst({ 
+      where: { id: req.params.id, userId: req.session.userId } 
+    });
     if (!account) return res.status(404).json({ error: 'Account not found' });
     
     // Try to revoke the token with Google
@@ -97,7 +147,7 @@ router.delete('/revoke/:id', async (req, res) => {
       console.warn('Failed to revoke token on Google side, deleting locally anyway', e);
     }
 
-    await prisma.googleAccount.delete({ where: { id: req.params.id } });
+    await prisma.googleAccount.delete({ where: { id: account.id } });
     res.json({ success: true });
   } catch (error) {
     console.error('Revoke error', error);
